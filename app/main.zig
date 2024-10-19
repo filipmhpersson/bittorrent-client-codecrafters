@@ -33,6 +33,8 @@ fn decodeBencode(encodedValue: []const u8) !*const []const u8 {
             return error.InvalidArgument;
         }
         return &encodedValue[firstColon.? + 1 ..];
+    } else if (encodedValue[0] == 'i' and encodedValue[encodedValue.len - 1] == 'e') {
+        return &encodedValue[1..encodedValue.len - 1];
     } else {
         try stdout.print("Only strings are supported at the moment\n", .{});
         std.process.exit(1);
