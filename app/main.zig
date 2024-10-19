@@ -41,7 +41,7 @@ fn decodeBencode(encodedValue: []const u8) !BencodeValue {
         }
         return BencodeValue{ .string = &encodedValue[firstColon.? + 1 ..] };
     } else if (encodedValue[0] == 'i' and encodedValue[encodedValue.len - 1] == 'e') {
-        var intValue: i32 = 0;
+        var intValue: i64 = 0;
 
         if(encodedValue[1] == '-') {
             for(encodedValue[2..encodedValue.len-1]) |char| {
@@ -61,7 +61,7 @@ fn decodeBencode(encodedValue: []const u8) !BencodeValue {
 
 const BencodedType = enum { int, string };
 const BencodeValue = union(BencodedType){
-    int: i32,
+    int: i64,
     string: *const []const u8
 
 };
