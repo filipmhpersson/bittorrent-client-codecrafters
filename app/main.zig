@@ -19,38 +19,49 @@ pub fn main() !void {
             try stdout.print("Invalid encoded value\n", .{});
             std.process.exit(1);
         };
-        switch (decodedStr.type) {
-            BencodedType.string => {
+        switch (decodedStr) {
+            .string => {
                 var string = std.ArrayList(u8).init(allocator);
-                try std.json.stringify(decodedStr.value.*, .{}, string.writer());
+                try std.json.stringify(decodedStr.string.*, .{}, string.writer());
                 const jsonStr = try string.toOwnedSlice();
                 try stdout.print("{s}\n", .{jsonStr});
             },
-            BencodedType.int => {
-                for (decodedStr.value.*) |char| {
-                    try stdout.print("{d}", .{char - '0'});
-                }
-                try stdout.print("\n", .{});
+            .int => {
+                try stdout.print("{d}\n", .{decodedStr.int});
             },
         }
     }
 }
 
-fn decodeBencode(encodedValue: []const u8) !BencodedValue {
+fn decodeBencode(encodedValue: []const u8) !BencodeValue {
     if (encodedValue[0] >= '0' and encodedValue[0] <= '9') {
         const firstColon = std.mem.indexOf(u8, encodedValue, ":");
         if (firstColon == null) {
             return error.InvalidArgument;
         }
-        return BencodedValue{ .type = BencodedType.string, .value = &encodedValue[firstColon.? + 1 ..] };
+        return BencodeValue{ .string = &encodedValue[firstColon.? + 1 ..] };
     } else if (encodedValue[0] == 'i' and encodedValue[encodedValue.len - 1] == 'e') {
-        return BencodedValue{ .type = BencodedType.int, .value = &encodedValue[1 .. encodedValue.len - 1] };
+        var intValue: i32 = 0;
+
+        if(encodedValue[1] == '-') {
+            for(encodedValue[2..encodedValue.len-1]) |char| {
+                intValue = (intValue * 10) - (char - '0');
+            }
+        } else {
+            for(encodedValue[1..encodedValue.len-1]) |char| {
+                intValue = (intValue * 10) + char - '0';
+            }
+        }
+        return BencodeValue{ .int = intValue };
     } else {
         try stdout.print("Only strings are supported at the moment\n", .{});
         std.process.exit(1);
     }
 }
 
-const BencodedType = enum { string, int };
+const BencodedType = enum { int, string };
+const BencodeValue = union(BencodedType){
+    int: i32,
+    string: *const []const u8
 
-const BencodedValue = struct { type: BencodedType, value: *const []const u8 };
+};
