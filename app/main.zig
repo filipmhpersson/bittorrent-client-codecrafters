@@ -49,6 +49,7 @@ fn printBencode(bencodedValue: BencodeValue) !void {
     }
 }
 fn decodeBencode(encodedValue: []const u8) !BencodeValue {
+    std.debug.print("Decoding {s}\n", .{encodedValue});
     if (encodedValue[0] >= '0' and encodedValue[0] <= '9') {
         const firstColon = std.mem.indexOf(u8, encodedValue, ":");
         if (firstColon == null) {
@@ -80,15 +81,15 @@ fn decodeBencode(encodedValue: []const u8) !BencodeValue {
         std.debug.print("Parsing bencoded list", .{});
         while(i < encodedValue.len - 1) {
             const curr = encodedValue[i];
-            std.debug.print("Iterating encoded value at index {d} with value {d}\n", .{ i, curr});
+            std.debug.print("Iterating encoded value at index {d} with value {d}\n", .{ i,  curr});
             if(curr >= '0' and curr <= '9') {
                 var firstColon = std.mem.indexOf(u8, encodedValue[i..], ":")  orelse unreachable;
                 firstColon += i;
                 const len = getInt(encodedValue[i..firstColon]);
-                std.debug.print("Parsing string colon {d}, with len {d}\n", .{ firstColon, len});
-                const decodedText = try decodeBencode(encodedValue[i..len + firstColon + i]);
+                std.debug.print("For text {s} Parsing string colon  {d}, with len {d} and index {d}\n", .{ encodedValue, firstColon, len, i});
+                const decodedText = try decodeBencode(encodedValue[i..len + firstColon + 1]);
                 try bencodedArray.append(decodedText);
-                i += firstColon + len;
+                i = firstColon + len + 1;
 
             } else if (curr == 'i'){
 
@@ -103,7 +104,17 @@ fn decodeBencode(encodedValue: []const u8) !BencodeValue {
                     try stdout.print("Cannot find end for int in array\n", .{});
                     std.process.exit(1);
                 }
-            } else {
+            } 
+            else if (curr == 'l') {
+                const innerListIndex = std.mem.lastIndexOf(u8, encodedValue[i..encodedValue.len - 1], "ee") orelse unreachable;
+                std.debug.print("Found inner list, end index {d}\n", .{innerListIndex});
+
+                const obj = try decodeBencode(encodedValue[i..innerListIndex + i + 2]);
+                try bencodedArray.append(obj);
+                std.debug.print("Done inner", .{});
+                i += innerListIndex + 2;
+            }
+            else {
                     try stdout.print("Only strings and ints allowed in arrays\n", .{});
                     std.process.exit(1);
             }
