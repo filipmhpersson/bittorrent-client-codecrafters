@@ -72,7 +72,7 @@ fn printBencode(bencodedValue: reader.BencodeValue) !void {
             for (bencodedValue.array, 0..) |item, i| {
                 try printBencode(item);
                 if (i < bencodedValue.array.len - 1) {
-                    try stdout.print(", ", .{});
+                    try stdout.print(",", .{});
                 }
             }
             try stdout.print("]", .{});
