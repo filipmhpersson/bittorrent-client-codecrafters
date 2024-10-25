@@ -35,21 +35,27 @@ fn printBencode(bencodedValue: reader.BencodeValue) !void {
             try stdout.print("{s}", .{jsonStr});
         },
         .dictionary => {
-            if(!@inComptime()) {
-
             try stdout.print("{{", .{});
             var k = bencodedValue.dictionary.keyIterator();
-            while(k.next()) |key| {
-
+            var array = std.ArrayList([]const u8).init(allocator);
+            defer array.deinit();
+            while (k.next()) |key| {
+                try array.append(key.*);
+            }
+            const slice = try array.toOwnedSlice();
+            std.mem.sort([]const u8, slice, {}, lessthan);
+            for (slice, 0..) |key, i| {
                 var string = std.ArrayList(u8).init(allocator);
-                try std.json.stringify(key.*, .{}, string.writer());
+                try std.json.stringify(key, .{}, string.writer());
                 const jsonStr = try string.toOwnedSlice();
                 try stdout.print("{s}", .{jsonStr});
                 try stdout.print(":", .{});
-                try printBencode(bencodedValue.dictionary.get(key.*).?);
+                try printBencode(bencodedValue.dictionary.get(key).?);
+                if (i < slice.len - 1) {
+                    try stdout.print(",", .{});
+                }
             }
             try stdout.print("}}", .{});
-            }
         },
         .int => {
             try stdout.print("{d}", .{bencodedValue.int});
@@ -59,11 +65,14 @@ fn printBencode(bencodedValue: reader.BencodeValue) !void {
 
             for (bencodedValue.array.*, 0..) |item, i| {
                 try printBencode(item);
-                if(i < bencodedValue.array.*.len - 1) {
+                if (i < bencodedValue.array.*.len - 1) {
                     try stdout.print(", ", .{});
                 }
             }
             try stdout.print("]", .{});
         },
     }
+}
+fn lessthan(_: void, lhs: []const u8, rhs: []const u8) bool {
+    return std.mem.order(u8, lhs, rhs) == .lt;
 }
