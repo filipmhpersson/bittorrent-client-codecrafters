@@ -49,12 +49,15 @@ fn getString(input: []const u8, pos: *usize) ParserError!BencodeValue {
     return BencodeValue{ .string = input[firstColon + 1 .. pos.*] };
 }
 fn getList(input: []const u8, pos: *usize, allocator: std.mem.Allocator) ParserError!BencodeValue {
-    const lastEnd = std.mem.lastIndexOf(u8, input, "e") orelse return ParserError.InvalidArgument;
     var bencodedArray = std.ArrayList(BencodeValue).init(allocator);
     defer bencodedArray.deinit();
     pos.* += 1;
-    while (pos.* < lastEnd) {
-        const b = try getNextValue(input[0..lastEnd], pos, allocator);
+    while (true) {
+        const peek = input[pos.*];
+        if(peek == 'e') {
+            break;
+        }
+        const b = try getNextValue(input, pos, allocator);
         bencodedArray.append(b) catch return ParserError.AllocatorError;
     }
     const a = bencodedArray.toOwnedSlice() catch return ParserError.AllocatorError;
@@ -63,14 +66,17 @@ fn getList(input: []const u8, pos: *usize, allocator: std.mem.Allocator) ParserE
 }
 
 fn getDictionary(input: []const u8, pos: *usize, allocator: std.mem.Allocator) ParserError!BencodeValue {
-    const lastEnd = std.mem.lastIndexOf(u8, input, "e") orelse return ParserError.InvalidArgument;
     pos.* += 1;
     var dict = std.StringHashMap(BencodeValue).init(allocator);
 
     var  isArray:u8 = 0;
-    while (pos.* < lastEnd) {
+    while (true) {
+        const peek = input[pos.*];
+        if(peek == 'e') {
+            break;
+        }
         const key = try getString(input, pos);
-        const value = try getNextValue(input[0..lastEnd], pos, allocator);
+        const value = try getNextValue(input, pos, allocator);
         switch (value) {
             BencodedType.array => {
                 isArray = 1;
