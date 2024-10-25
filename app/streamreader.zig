@@ -59,7 +59,7 @@ fn getList(input: []const u8, pos: *usize, allocator: std.mem.Allocator) ParserE
     }
     const a = bencodedArray.toOwnedSlice() catch return ParserError.AllocatorError;
     pos.* += 1;
-    return BencodeValue{ .array = &a };
+    return BencodeValue{ .array = a };
 }
 
 fn getDictionary(input: []const u8, pos: *usize, allocator: std.mem.Allocator) ParserError!BencodeValue {
@@ -67,10 +67,24 @@ fn getDictionary(input: []const u8, pos: *usize, allocator: std.mem.Allocator) P
     pos.* += 1;
     var dict = std.StringHashMap(BencodeValue).init(allocator);
 
+    var  isArray:u8 = 0;
     while (pos.* < lastEnd) {
         const key = try getString(input, pos);
         const value = try getNextValue(input[0..lastEnd], pos, allocator);
+        switch (value) {
+            BencodedType.array => {
+                isArray = 1;
+                std.log.debug("HEJ {d} {s}\n", .{value.array.len, key.string});
+            },
+            else => {},
+        }
         dict.put(key.string, value) catch return ParserError.AllocatorError;
+    }
+
+    std.log.debug("DICT COUNT {d}\n", .{dict.count()});
+    if(dict.count() == 3) {
+        const arr = dict.get("list_key").?;
+        std.log.debug("AFTER {d}\n", .{arr.array.len});
     }
 
     pos.* += 1;
@@ -84,11 +98,11 @@ fn getInt(digits: []const u8) usize {
     }
     return int;
 }
-pub const BencodedType = enum { int, string, array,dictionary };
+pub const BencodedType = enum { int, string, array, dictionary };
 pub const BencodeValue = union(BencodedType) {
     int: i64,
     string: []const u8,
-    array: *const []const BencodeValue,
+    array: []BencodeValue,
     dictionary: std.StringHashMap(BencodeValue),
 };
 pub const ParserError = error{ InvalidArgument, AllocatorError };
@@ -114,8 +128,8 @@ test "Parse list with intreturn int" {
     const testValue = "li3232ee";
     var pos: usize = 0;
     const arr = try getNextValue(testValue, &pos, alloc);
-    defer alloc.free(arr.array.*);
-    try std.testing.expectEqual(arr.array.*[0].int, 3232);
+    defer alloc.free(arr.array);
+    try std.testing.expectEqual(arr.array[0].int, 3232);
     try std.testing.expectEqual(pos, testValue.len);
 }
 
@@ -125,10 +139,10 @@ test "Parse list with int and string" {
     var pos: usize = 0;
     const arr = try getNextValue(testValue, &pos, alloc);
 
-    try std.testing.expectEqual(arr.array.*[0].int, 3232);
-    try std.testing.expectEqual(arr.array.*.len, 2);
+    try std.testing.expectEqual(arr.array[0].int, 3232);
+    try std.testing.expectEqual(arr.array.len, 2);
     try std.testing.expectEqual(pos, testValue.len);
-    defer alloc.free(arr.array.*);
+    defer alloc.free(arr.array);
 }
 test "Parse dict with int and string" {
     const alloc = std.testing.allocator;
@@ -137,7 +151,7 @@ test "Parse dict with int and string" {
     var b = try getNextValue(testValue, &pos, alloc);
 
     const res = b.dictionary.get("piineapple").?;
-    defer b.dictionary.clearAndFree(); 
+    defer b.dictionary.clearAndFree();
     try std.testing.expectEqual(res.int, 3232);
     try std.testing.expectEqual(pos, testValue.len);
 }

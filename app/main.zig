@@ -16,8 +16,12 @@ pub fn main() !void {
 
     var position: usize = 0;
     if (std.mem.eql(u8, command, "decode")) {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const alloca = arena.allocator();
+
         const encodedStr = args[2];
-        const b = reader.getNextValue(encodedStr, &position, allocator) catch {
+        const b = reader.getNextValue(encodedStr, &position, alloca) catch {
             try stdout.print("Invalid encoded value\n", .{});
             std.process.exit(1);
         };
@@ -36,8 +40,10 @@ fn printBencode(bencodedValue: reader.BencodeValue) !void {
         },
         .dictionary => {
             try stdout.print("{{", .{});
-            var k = bencodedValue.dictionary.keyIterator();
+            const d = bencodedValue.dictionary;
+            var k = d.keyIterator();
             var array = std.ArrayList([]const u8).init(allocator);
+
             defer array.deinit();
             while (k.next()) |key| {
                 try array.append(key.*);
@@ -50,7 +56,7 @@ fn printBencode(bencodedValue: reader.BencodeValue) !void {
                 const jsonStr = try string.toOwnedSlice();
                 try stdout.print("{s}", .{jsonStr});
                 try stdout.print(":", .{});
-                try printBencode(bencodedValue.dictionary.get(key).?);
+                try printBencode(d.get(key).?);
                 if (i < slice.len - 1) {
                     try stdout.print(",", .{});
                 }
@@ -63,9 +69,9 @@ fn printBencode(bencodedValue: reader.BencodeValue) !void {
         .array => {
             try stdout.print("[", .{});
 
-            for (bencodedValue.array.*, 0..) |item, i| {
+            for (bencodedValue.array, 0..) |item, i| {
                 try printBencode(item);
-                if (i < bencodedValue.array.*.len - 1) {
+                if (i < bencodedValue.array.len - 1) {
                     try stdout.print(", ", .{});
                 }
             }
