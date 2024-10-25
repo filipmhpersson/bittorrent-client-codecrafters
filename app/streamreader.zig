@@ -54,7 +54,7 @@ fn getList(input: []const u8, pos: *usize, allocator: std.mem.Allocator) ParserE
     defer bencodedArray.deinit();
     pos.* += 1;
     while (pos.* < lastEnd) {
-        const b = try getNextValue(input, pos, allocator);
+        const b = try getNextValue(input[0..lastEnd], pos, allocator);
         bencodedArray.append(b) catch return ParserError.AllocatorError;
     }
     const a = bencodedArray.toOwnedSlice() catch return ParserError.AllocatorError;
@@ -69,7 +69,7 @@ fn getDictionary(input: []const u8, pos: *usize, allocator: std.mem.Allocator) P
 
     while (pos.* < lastEnd) {
         const key = try getString(input, pos);
-        const value = try getNextValue(input, pos, allocator);
+        const value = try getNextValue(input[0..lastEnd], pos, allocator);
         dict.put(key.string, value) catch return ParserError.AllocatorError;
     }
 
