@@ -74,17 +74,10 @@ fn getDictionary(input: []const u8, pos: *usize, allocator: std.mem.Allocator) P
         switch (value) {
             BencodedType.array => {
                 isArray = 1;
-                std.log.debug("HEJ {d} {s}\n", .{value.array.len, key.string});
             },
             else => {},
         }
         dict.put(key.string, value) catch return ParserError.AllocatorError;
-    }
-
-    std.log.debug("DICT COUNT {d}\n", .{dict.count()});
-    if(dict.count() == 3) {
-        const arr = dict.get("list_key").?;
-        std.log.debug("AFTER {d}\n", .{arr.array.len});
     }
 
     pos.* += 1;
