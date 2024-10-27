@@ -28,6 +28,29 @@ pub fn main() !void {
         try printBencode(b);
         try stdout.print("\n", .{});
     }
+    if (std.mem.eql(u8, command, "info")) {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const alloca = arena.allocator();
+
+        const fileArg = args[2];
+
+        var file = try std.fs.cwd().openFile(fileArg, .{});
+        defer file.close();
+
+        var buf_reader = std.io.bufferedReader(file.reader());
+        var in_stream = buf_reader.reader();
+
+        var buf: [1024]u8 = undefined;
+        while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+            const b = reader.getNextValue(line, &position, alloca) catch {
+                try stdout.print("Invalid encoded value\n", .{});
+                std.process.exit(1);
+            };
+            try printTorrent(b);
+            try stdout.print("\n", .{});
+        }
+    }
 }
 
 fn printBencode(bencodedValue: reader.BencodeValue) !void {
@@ -79,6 +102,25 @@ fn printBencode(bencodedValue: reader.BencodeValue) !void {
         },
     }
 }
+
+fn printTorrent(input: reader.BencodeValue) !void {
+    if (input != reader.BencodedType.dictionary) {
+        return error.InvalidArgument;
+    }
+
+    const url = input.dictionary.get("announce").?;
+    const metadata = input.dictionary.get("info").?;
+
+    if (metadata != reader.BencodedType.dictionary) {
+        return error.InvalidArgument;
+    }
+
+    const length = metadata.dictionary.get("length").?;
+
+    try stdout.print("Tracker URL: {s}\n", .{url.string});
+    try stdout.print("Length: {d}", .{length.int});
+}
+
 fn lessthan(_: void, lhs: []const u8, rhs: []const u8) bool {
     return std.mem.order(u8, lhs, rhs) == .lt;
 }
