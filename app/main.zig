@@ -45,6 +45,7 @@ pub fn main() !void {
 
         var buf: [1024]u8 = undefined;
         while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+                std.debug.print("Starting next value, with input {s}", .{line});
             const b = reader.getNextValue(line, &position, alloca) catch {
                 try stdout.print("Invalid encoded value\n", .{});
                 std.process.exit(1);
