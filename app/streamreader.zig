@@ -41,6 +41,7 @@ fn getInteger(input: []const u8, pos: *usize) ParserError!BencodeValue {
     return BencodeValue{ .int = intValue };
 }
 fn getString(input: []const u8, pos: *usize) ParserError!BencodeValue {
+    std.debug.print("reading string in '{s}'\n", .{input[pos.*..]});
     var firstColon = std.mem.indexOf(u8, input[pos.*..], ":") orelse unreachable;
     firstColon += pos.*;
     const len = getInt(input[pos.*..firstColon]);

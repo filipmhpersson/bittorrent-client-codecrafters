@@ -36,23 +36,17 @@ pub fn main() !void {
         const alloca = arena.allocator();
 
         const fileArg = args[2];
-
         var file = try std.fs.cwd().openFile(fileArg, .{});
+        const encodedStr = try file.readToEndAlloc(allocator, 1024 * 1024);
+        const b = reader.getNextValue(encodedStr, &position, alloca) catch {
+            try stdout.print("Invalid encoded value\n", .{});
+            std.process.exit(1);
+        };
         defer file.close();
 
-        var buf_reader = std.io.bufferedReader(file.reader());
-        var in_stream = buf_reader.reader();
 
-        var buf: [1024]u8 = undefined;
-        while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
-                std.debug.print("Starting next value, with input {s}", .{line});
-            const b = reader.getNextValue(line, &position, alloca) catch {
-                try stdout.print("Invalid encoded value\n", .{});
-                std.process.exit(1);
-            };
-            try printTorrent(b,alloca);
-            try stdout.print("\n", .{});
-        }
+        try printTorrent(b, alloca);
+        try stdout.print("\n", .{});
     }
 }
 
@@ -127,9 +121,7 @@ fn printTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
     try stdout.print("Tracker URL: {s}\n", .{url.string});
     try stdout.print("Length: {d}\n", .{length.int});
     try stdout.print("Info Hash: ", .{});
-    for(sha1) |char| {
-        try stdout.print("{x}", .{char});
-    }
+    try stdout.print("{s}", .{std.fmt.fmtSliceHexLower(sha1[0..])});
 }
 
 fn lessthan(_: void, lhs: []const u8, rhs: []const u8) bool {
