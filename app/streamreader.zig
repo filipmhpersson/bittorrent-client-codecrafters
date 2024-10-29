@@ -67,7 +67,7 @@ fn getList(input: []const u8, pos: *usize, allocator: std.mem.Allocator) ParserE
 
 fn getDictionary(input: []const u8, pos: *usize, allocator: std.mem.Allocator) ParserError!BencodeValue {
     pos.* += 1;
-    var dict = std.StringHashMap(BencodeValue).init(allocator);
+    var dict = std.StringArrayHashMap(BencodeValue).init(allocator);
 
     var  isArray:u8 = 0;
     while (true) {
@@ -102,7 +102,7 @@ pub const BencodeValue = union(BencodedType) {
     int: i64,
     string: []const u8,
     array: []BencodeValue,
-    dictionary: std.StringHashMap(BencodeValue),
+    dictionary: std.StringArrayHashMap(BencodeValue),
 };
 pub const ParserError = error{ InvalidArgument, AllocatorError };
 

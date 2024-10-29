@@ -1,5 +1,7 @@
 const std = @import("std");
 const reader = @import("streamreader.zig");
+const writer = @import("bencodeWriter.zig");
+const sha = std.crypto.hash.Sha1;
 const stdout = std.io.getStdOut().writer();
 var allocator = std.heap.page_allocator;
 
@@ -47,7 +49,7 @@ pub fn main() !void {
                 try stdout.print("Invalid encoded value\n", .{});
                 std.process.exit(1);
             };
-            try printTorrent(b);
+            try printTorrent(b,alloca);
             try stdout.print("\n", .{});
         }
     }
@@ -64,12 +66,12 @@ fn printBencode(bencodedValue: reader.BencodeValue) !void {
         .dictionary => {
             try stdout.print("{{", .{});
             const d = bencodedValue.dictionary;
-            var k = d.keyIterator();
+            const k = d.keys();
             var array = std.ArrayList([]const u8).init(allocator);
 
             defer array.deinit();
-            while (k.next()) |key| {
-                try array.append(key.*);
+            for (k) |key| {
+                try array.append(key);
             }
             const slice = try array.toOwnedSlice();
             std.mem.sort([]const u8, slice, {}, lessthan);
@@ -103,7 +105,7 @@ fn printBencode(bencodedValue: reader.BencodeValue) !void {
     }
 }
 
-fn printTorrent(input: reader.BencodeValue) !void {
+fn printTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
     if (input != reader.BencodedType.dictionary) {
         return error.InvalidArgument;
     }
@@ -116,9 +118,17 @@ fn printTorrent(input: reader.BencodeValue) !void {
     }
 
     const length = metadata.dictionary.get("length").?;
+    const bencodedInfo = try writer.bencode(&metadata, alloc);
+
+    var sha1: [20]u8 = undefined;
+    sha.hash(bencodedInfo, &sha1, sha.Options{});
 
     try stdout.print("Tracker URL: {s}\n", .{url.string});
-    try stdout.print("Length: {d}", .{length.int});
+    try stdout.print("Length: {d}\n", .{length.int});
+    try stdout.print("Info Hash: ", .{});
+    for(sha1) |char| {
+        try stdout.print("{x}", .{char});
+    }
 }
 
 fn lessthan(_: void, lhs: []const u8, rhs: []const u8) bool {
