@@ -44,7 +44,6 @@ pub fn main() !void {
         };
         defer file.close();
 
-
         try printTorrent(b, alloca);
         try stdout.print("\n", .{});
     }
@@ -113,6 +112,8 @@ fn printTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
     }
 
     const length = metadata.dictionary.get("length").?;
+    const pieceLength = metadata.dictionary.get("piece length").?;
+    const pieces = metadata.dictionary.get("pieces").?.string;
     const bencodedInfo = try writer.bencode(&metadata, alloc);
 
     var sha1: [20]u8 = undefined;
@@ -122,6 +123,15 @@ fn printTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
     try stdout.print("Length: {d}\n", .{length.int});
     try stdout.print("Info Hash: ", .{});
     try stdout.print("{s}", .{std.fmt.fmtSliceHexLower(sha1[0..])});
+    try stdout.print("Piece Length: {d}\n", .{pieceLength.int});
+    try stdout.print("Piece Hashes:\n", .{});
+    {
+        var i: usize = 0;
+        while (i < pieces.len) {
+            try stdout.print("{s}\n", .{std.fmt.fmtSliceHexLower(pieces[i..i+20])});
+            i +=20;
+        }
+    }
 }
 
 fn lessthan(_: void, lhs: []const u8, rhs: []const u8) bool {
