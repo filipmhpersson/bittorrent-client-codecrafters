@@ -3,6 +3,7 @@ const reader = @import("streamreader.zig");
 const writer = @import("bencodeWriter.zig");
 const sha = std.crypto.hash.Sha1;
 const stdout = std.io.getStdOut().writer();
+const Headers = std.http.Headers;
 var allocator = std.heap.page_allocator;
 
 pub fn main() !void {
@@ -45,6 +46,23 @@ pub fn main() !void {
         defer file.close();
 
         try printTorrent(b, alloca);
+        try stdout.print("\n", .{});
+    }
+    if (std.mem.eql(u8, command, "peers")) {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const alloca = arena.allocator();
+
+        const fileArg = args[2];
+        var file = try std.fs.cwd().openFile(fileArg, .{});
+        const encodedStr = try file.readToEndAlloc(allocator, 1024 * 1024);
+        const b = reader.getNextValue(encodedStr, &position, alloca) catch {
+            try stdout.print("Invalid encoded value\n", .{});
+            std.process.exit(1);
+        };
+        defer file.close();
+
+        try getTorrent(b, alloca);
         try stdout.print("\n", .{});
     }
 }
@@ -119,6 +137,8 @@ fn printTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
     var sha1: [20]u8 = undefined;
     sha.hash(bencodedInfo, &sha1, sha.Options{});
 
+
+
     try stdout.print("Tracker URL: {s}\n", .{url.string});
     try stdout.print("Length: {d}\n", .{length.int});
     try stdout.print("Info Hash: ", .{});
@@ -132,6 +152,88 @@ fn printTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
             i +=20;
         }
     }
+}
+
+fn getTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
+    if (input != reader.BencodedType.dictionary) {
+        return error.InvalidArgument;
+    }
+
+    const url = input.dictionary.get("announce").?;
+    const metadata = input.dictionary.get("info").?;
+
+    if (metadata != reader.BencodedType.dictionary) {
+        return error.InvalidArgument;
+    }
+
+    //const pieceLength = metadata.dictionary.get("piece length").?;
+    //const pieces = metadata.dictionary.get("pieces").?.string;
+    const bencodedInfo = try writer.bencode(&metadata, alloc);
+
+    var sha1: [20]u8 = undefined;
+    sha.hash(bencodedInfo, &sha1, sha.Options{});
+    var client = std.http.Client {.allocator =  alloc };
+    const length = metadata.dictionary.get("length").?;
+    const downloaded:usize = 0;
+    const uploaded:usize = 0;
+    defer client.deinit();
+    var list = std.ArrayList(u8).init(alloc);
+
+
+    const infohash = try std.fmt.allocPrint(alloc, "{s}", .{std.fmt.fmtSliceHexLower(sha1[0..])});
+
+
+    try list.appendSlice(url.string);
+    try list.appendSlice("?info_hash=");
+    {
+        var i: usize = 0;
+        while(i < infohash.len) : (i += 2) {
+            try list.appendSlice(try std.fmt.allocPrint(alloc, "%{s}", .{infohash[i..i+2]}));
+        }
+    }
+    try list.appendSlice("&peer_id=homersimpsontvcatgoo");
+    try list.appendSlice("&port=6881");
+    try list.appendSlice(try std.fmt.allocPrint(alloc, "&uploaded={d}", .{ uploaded}));
+    try list.appendSlice(try std.fmt.allocPrint(alloc, "&downloaded={d}", .{ downloaded}));
+        try list.appendSlice(try std.fmt.allocPrint(alloc, "&left={d}", .{ length.int}));
+    try list.appendSlice("&compact=1");
+    const fmtUrl  = try list.toOwnedSlice();
+
+    std.debug.print("Request URL {s}\n", .{fmtUrl});
+    const uri =  try std.Uri.parse(fmtUrl);
+
+    std.debug.print("Request parsed URL {s}\n", .{uri.query.?.percent_encoded});
+    var headerbuf: [1000]u8 = undefined;
+    const options = std.http.Client.RequestOptions { .server_header_buffer = &headerbuf };
+    var con = try client.open(std.http.Method.GET, uri,options );
+    defer con.deinit();
+    try con.send();
+    try con.wait();
+    const resp = con.response;
+    const buf = try alloc.alloc(u8, resp.content_length.?);
+    _ = try con.readAll(buf);
+    std.debug.print("HTTP Response {s}, code {d}\n", .{buf,resp.status});
+    var position:usize = 0;
+    const response = try reader.getNextValue(buf, &position, alloc);
+    const p = response.dictionary.get("peers").?.string;
+    
+    {
+        var i: usize = 0;
+        while(i < p.len) : (i += 6) {
+            const slice = p[i..i+6];
+            try stdout.print("{d}.{d}.{d}.{d}:{d}{d}\n", .{
+                slice[0],
+                slice[1],
+                slice[2],
+                slice[3],
+                slice[4],
+                slice[5],
+            });
+        }
+    }
+
+
+
 }
 
 fn lessthan(_: void, lhs: []const u8, rhs: []const u8) bool {
