@@ -221,13 +221,25 @@ fn getTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
         var i: usize = 0;
         while(i < p.len) : (i += 6) {
             const slice = p[i..i+6];
-            try stdout.print("{d}.{d}.{d}.{d}:{d}{d}\n", .{
+
+            const aw = std.fmt.fmtSliceHexLower(slice[4..]).data;
+            var ba : [8]u8 = undefined;
+            ba[0] = 0;
+            ba[1] = 0;
+            ba[2] = 0;
+            ba[3] = 0;
+            ba[4] = 0;
+            ba[5] = 0;
+            ba[6] = aw[0];
+            ba[7] = aw[1];
+            const parsedPort = std.mem.readInt(usize, &ba, std.builtin.Endian.big);
+
+            try stdout.print("{d}.{d}.{d}.{d}:{d}\n", .{
                 slice[0],
                 slice[1],
                 slice[2],
                 slice[3],
-                slice[4],
-                slice[5],
+                parsedPort
             });
         }
     }
