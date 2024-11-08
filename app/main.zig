@@ -297,7 +297,7 @@ fn getHandshake(input: reader.BencodeValue, sampleIp: []u8, alloc: std.mem.Alloc
 
     const res = try tcpReader.readStruct(Handshake);
     std.debug.print("Read response {s} buff length ", .{res.peerId[0..]});
-     try stdout.print("Peer ID: {s}", .{std.fmt.bytesToHex(res.peerId[0..])});
+     try stdout.print("Peer ID: {s}", .{std.fmt.fmtSliceHexLower(res.peerId[0..])});
 }
 
 
