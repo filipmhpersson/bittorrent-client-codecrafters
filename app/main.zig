@@ -271,38 +271,71 @@ fn getHandshake(input: reader.BencodeValue, sampleIp: []u8, alloc: std.mem.Alloc
     var sha1: [20]u8 = undefined;
     sha.hash(bencodedInfo, &sha1, sha.Options{});
 
-
     const indexSemi = std.mem.indexOf(u8, sampleIp, ":").?;
 
-    var port:u16 = 0;
-    for(sampleIp[indexSemi+1..]) |char| {
+    var port: u16 = 0;
+    for (sampleIp[indexSemi + 1 ..]) |char| {
         std.debug.print("Char in port {c}\n", .{char});
-        port = port * 10 + (char-'0');
+        port = port * 10 + (char - '0');
     }
 
     const ip = try std.net.Ip4Address.parse(sampleIp[0..indexSemi], port);
 
     const c = std.net.Address{ .in = ip };
-    
+
     const conn = try std.net.tcpConnectToAddress(c);
 
-    std.debug.print("Post close\n",.{});
+    std.debug.print("Post close\n", .{});
     defer conn.close();
 
-    const tcpReader = conn.reader();
-    const tcpwriter = conn.writer();
+    const tcpReader = conn.reader().any();
+    const tcpwriter = conn.writer().any();
 
-    const handshake = Handshake { .infoHash = sha1, .peerId = "00112233445566778891".*};
+    const handshake = Handshake{ .infoHash = sha1, .peerId = "00112233445566778891".* };
     try tcpwriter.writeStruct(handshake);
 
     const res = try tcpReader.readStruct(Handshake);
-    std.debug.print("Read response {s} buff length ", .{res.peerId[0..]});
-     try stdout.print("Peer ID: {s}", .{std.fmt.fmtSliceHexLower(res.peerId[0..])});
+    _ = try waitForResponse(&tcpReader, MessageType.Bitfield);
+    try tcpwriter.writeStruct(BasicMessage {.messageType = 2 });
+    std.debug.print("Wrote 2\n", .{});
+
+    _ = try waitForResponse(&tcpReader, MessageType.UnChocke);
+    try stdout.print("Peer ID: {s}", .{std.fmt.fmtSliceHexLower(res.peerId[0..])});
 }
 
+fn waitForResponse(tcpReader: *const std.io.AnyReader, expectedResponse: MessageType) !BasicMessage {
 
+
+    while (true) {
+        const message = try getNextMessage(tcpReader);
+
+        if(message.messageType == @intFromEnum(expectedResponse))
+            return message;
+
+    }
+}
+fn getNextMessage(tcpReader: *const std.io.AnyReader) !BasicMessage {
+    var len: u32 = 0;
+    while(len == 0) {
+        
+        std.debug.print("WTF bits: {d} \n", .{@divExact(@typeInfo(u32).int.bits, 8)});
+        //const bytes = try tcpReader.*.readBytesNoEof(4);
+        //len = std.mem.readInt(u32, &bytes, .big);
+        len = try tcpReader.*.readInt(u32, .big);
+    }
+
+    const bytes = try tcpReader.*.readBytesNoEof(1);
+    const messageType: MessageType = @enumFromInt(std.mem.readInt(u8, &bytes, .big));
+
+        std.debug.print("Byte: {any} Len: {d}\n", .{messageType, len});
+    len -= 1;
+
+    try tcpReader.skipBytes(len, .{});
+    return BasicMessage { .messageType = @intFromEnum(messageType)};
+
+
+}
 const Handshake = extern struct {
-
     protocolLength: u8 = 19,
 
     ident: [19]u8 = "BitTorrent protocol".*,
@@ -312,8 +345,18 @@ const Handshake = extern struct {
     infoHash: [20]u8,
 
     peerId: [20]u8,
-
 };
+
+const BasicMessage = extern struct {
+    messageType: u8
+};
+
+const BitfieldMessage = struct {
+    messageType: MessageType,
+    bitfield: u4
+};
+const MessageType = enum { Choke, UnChocke, Interested, NotInterested, Have, Bitfield, Request, Piece, Cancel };
+
 fn lessthan(_: void, lhs: []const u8, rhs: []const u8) bool {
     return std.mem.order(u8, lhs, rhs) == .lt;
 }
