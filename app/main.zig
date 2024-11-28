@@ -392,6 +392,8 @@ fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *re
         var take: u32 = 16 * 1024;
         if (take + totalDownloadSize > castedPieceLength) {
             take = castedPieceLength - totalDownloadSize;
+
+            std.debug.print("DOES LAST MAGIC take {d} casted {d} download {d}\n", .{take, castedPieceLength, totalDownloadSize});
         }
         std.debug.print("Size {d} Index {d} begin {d} length {d}\n", .{ castedPieceLength, pieceIndex, totalDownloadSize, take });
 
