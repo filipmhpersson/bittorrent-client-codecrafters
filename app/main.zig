@@ -5,6 +5,8 @@ const sha = std.crypto.hash.Sha1;
 const stdout = std.io.getStdOut().writer();
 const Headers = std.http.Headers;
 var allocator = std.heap.page_allocator;
+var pieceIndex: u32 = 0;
+var filePath: []u8 = undefined;
 
 pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
@@ -17,14 +19,13 @@ pub fn main() !void {
 
     const command = args[1];
 
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloca = arena.allocator();
+    const option = args[2];
     var position: usize = 0;
     if (std.mem.eql(u8, command, "decode")) {
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
-        const alloca = arena.allocator();
-
-        const encodedStr = args[2];
-        const b = reader.getNextValue(encodedStr, &position, alloca) catch {
+        const b = reader.getNextValue(option, &position, alloca) catch {
             try stdout.print("Invalid encoded value\n", .{});
             std.process.exit(1);
         };
@@ -32,12 +33,7 @@ pub fn main() !void {
         try stdout.print("\n", .{});
     }
     if (std.mem.eql(u8, command, "info")) {
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
-        const alloca = arena.allocator();
-
-        const fileArg = args[2];
-        var file = try std.fs.cwd().openFile(fileArg, .{});
+        var file = try std.fs.cwd().openFile(option, .{});
         const encodedStr = try file.readToEndAlloc(allocator, 1024 * 1024);
         const b = reader.getNextValue(encodedStr, &position, alloca) catch {
             try stdout.print("Invalid encoded value\n", .{});
@@ -49,12 +45,7 @@ pub fn main() !void {
         try stdout.print("\n", .{});
     }
     if (std.mem.eql(u8, command, "peers")) {
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
-        const alloca = arena.allocator();
-
-        const fileArg = args[2];
-        var file = try std.fs.cwd().openFile(fileArg, .{});
+        var file = try std.fs.cwd().openFile(option, .{});
         const encodedStr = try file.readToEndAlloc(allocator, 1024 * 1024);
         const b = reader.getNextValue(encodedStr, &position, alloca) catch {
             try stdout.print("Invalid encoded value\n", .{});
@@ -62,30 +53,60 @@ pub fn main() !void {
         };
         defer file.close();
 
-        try getTorrent(b, alloca);
+        _ = try getTorrent(b, alloca);
         try stdout.print("\n", .{});
     }
 
     if (std.mem.eql(u8, command, "handshake")) {
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
-        const alloca = arena.allocator();
-
-        const fileArg = args[2];
+        const fileArg = option;
         const peer = args[3];
         var file = try std.fs.cwd().openFile(fileArg, .{});
         const encodedStr = try file.readToEndAlloc(allocator, 1024 * 1024);
-        const b = reader.getNextValue(encodedStr, &position, alloca) catch {
+        var b = reader.getNextValue(encodedStr, &position, alloca) catch {
             try stdout.print("Invalid encoded value\n", .{});
             std.process.exit(1);
         };
         defer file.close();
 
-        try getHandshake(b, peer, alloca);
+        var ip: std.net.Ip4Address = undefined;
+        {
+            var port: u16 = 0;
+            const i = std.mem.indexOf(u8, peer, ":").?;
+            for (peer[i + 1 ..]) |char| {
+                if (char == undefined) {
+                    break;
+                }
+                std.debug.print("Char in port {c}\n", .{char});
+                port = port * 10 + (char - '0');
+            }
+            ip = try std.net.Ip4Address.parse(peer[0..i], port);
+        }
+
+        var requests: [1]*const TcpFunction = .{&getHandshake};
+        try sendRequests(&b, ip, alloca, requests[0..]);
         try stdout.print("\n", .{});
     }
-}
+    if (std.mem.eql(u8, command, "download_piece")) {
+        const output = args[3];
+        const torrent = args[4];
+        const piece = args[5];
+        filePath = output;
 
+        var file = try std.fs.cwd().openFile(torrent, .{});
+        const encodedStr = try file.readToEndAlloc(allocator, 1024 * 1024);
+        var b = reader.getNextValue(encodedStr, &position, alloca) catch {
+            try stdout.print("Invalid encoded value\n", .{});
+            std.process.exit(1);
+        };
+        defer file.close();
+        const ip = try getTorrent(b, alloca);
+
+        var requests: [2]*const TcpFunction = .{ &getHandshake, &getPiece };
+        try sendRequests(&b, ip, alloca, requests[0..]);
+        try stdout.print("\n", .{});
+        std.debug.print("Downloading piece for output {s} torret {s} piece index {d}\n", .{ output, torrent, piece });
+    }
+}
 fn printBencode(bencodedValue: reader.BencodeValue) !void {
     switch (bencodedValue) {
         .string => {
@@ -171,7 +192,7 @@ fn printTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
     }
 }
 
-fn getTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
+fn getTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !std.net.Ip4Address {
     if (input != reader.BencodedType.dictionary) {
         return error.InvalidArgument;
     }
@@ -237,52 +258,22 @@ fn getTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !void {
             const slice = p[i .. i + 6];
 
             const aw = std.fmt.fmtSliceHexLower(slice[4..]).data;
-            var ba: [8]u8 = undefined;
-            ba[0] = 0;
-            ba[1] = 0;
-            ba[2] = 0;
-            ba[3] = 0;
-            ba[4] = 0;
-            ba[5] = 0;
-            ba[6] = aw[0];
-            ba[7] = aw[1];
-            const parsedPort = std.mem.readInt(usize, &ba, std.builtin.Endian.big);
+            var ba: [2]u8 = undefined;
+            ba[0] = aw[0];
+            ba[1] = aw[1];
+            const parsedPort = std.mem.readInt(u16, &ba, std.builtin.Endian.big);
 
+            const address = .{ slice[0], slice[1], slice[2], slice[3] };
             try stdout.print("{d}.{d}.{d}.{d}:{d}\n", .{ slice[0], slice[1], slice[2], slice[3], parsedPort });
+            return std.net.Ip4Address.init(address, parsedPort);
         }
     }
+    return RequestError.NoIP;
 }
 
-fn getHandshake(input: reader.BencodeValue, sampleIp: []u8, alloc: std.mem.Allocator) !void {
-    if (input != reader.BencodedType.dictionary) {
-        return error.InvalidArgument;
-    }
-
-    const metadata = input.dictionary.get("info").?;
-
-    if (metadata != reader.BencodedType.dictionary) {
-        return error.InvalidArgument;
-    }
-
-    //const pieceLength = metadata.dictionary.get("piece length").?;
-    //const pieces = metadata.dictionary.get("pieces").?.string;
-    const bencodedInfo = try writer.bencode(&metadata, alloc);
-
-    var sha1: [20]u8 = undefined;
-    sha.hash(bencodedInfo, &sha1, sha.Options{});
-
-    const indexSemi = std.mem.indexOf(u8, sampleIp, ":").?;
-
-    var port: u16 = 0;
-    for (sampleIp[indexSemi + 1 ..]) |char| {
-        std.debug.print("Char in port {c}\n", .{char});
-        port = port * 10 + (char - '0');
-    }
-
-    const ip = try std.net.Ip4Address.parse(sampleIp[0..indexSemi], port);
-
-    const c = std.net.Address{ .in = ip };
-
+const TcpFunction = fn (tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *reader.BencodeValue, alloc: std.mem.Allocator) RequestError!void;
+fn sendRequests(input: *reader.BencodeValue, sampleIp: std.net.Ip4Address, alloc: std.mem.Allocator, requests: []*const TcpFunction) !void {
+    const c = std.net.Address{ .in = sampleIp };
     const conn = try std.net.tcpConnectToAddress(c);
 
     std.debug.print("Post close\n", .{});
@@ -290,35 +281,159 @@ fn getHandshake(input: reader.BencodeValue, sampleIp: []u8, alloc: std.mem.Alloc
 
     const tcpReader = conn.reader().any();
     const tcpwriter = conn.writer().any();
+    for (requests) |request| {
+        try request(tcpReader, tcpwriter, input, alloc);
+    }
+}
+const RequestError = error{ TcpConnection, TcpWriter, TcpResponse, BencodeParser, NoIP, FileErr };
+
+fn getHandshake(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *reader.BencodeValue, alloc: std.mem.Allocator) RequestError!void {
+    if (input.* != reader.BencodedType.dictionary) {
+        return error.BencodeParser;
+    }
+
+    const metadata = input.*.dictionary.get("info").?;
+
+    if (metadata != reader.BencodedType.dictionary) {
+        return error.BencodeParser;
+    }
+
+    //const pieceLength = metadata.dictionary.get("piece length").?;
+    //const pieces = metadata.dictionary.get("pieces").?.string;
+    const bencodedInfo = writer.bencode(&metadata, alloc) catch {
+        return RequestError.BencodeParser;
+    };
+
+    var sha1: [20]u8 = undefined;
+    sha.hash(bencodedInfo, &sha1, sha.Options{});
 
     const handshake = Handshake{ .infoHash = sha1, .peerId = "00112233445566778891".* };
-    try tcpwriter.writeStruct(handshake);
+    tcpWriter.writeStruct(handshake) catch {
+        return RequestError.TcpConnection;
+    };
 
-    const res = try tcpReader.readStruct(Handshake);
-    _ = try waitForResponse(&tcpReader, MessageType.Bitfield);
-    try tcpwriter.writeStruct(BasicMessage {.messageType = 2 });
-    std.debug.print("Wrote 2\n", .{});
+    _ = tcpReader.readStruct(Handshake) catch {
+        return RequestError.TcpConnection;
+    };
+    _ = waitForResponse(&tcpReader, MessageType.Bitfield) catch {
+        return RequestError.TcpResponse;
+    };
 
-    _ = try waitForResponse(&tcpReader, MessageType.UnChocke);
-    try stdout.print("Peer ID: {s}", .{std.fmt.fmtSliceHexLower(res.peerId[0..])});
+    tcpWriter.writeInt(u32, 1, .big) catch {
+        return RequestError.TcpWriter;
+    };
+    tcpWriter.writeByte(2) catch {
+        return RequestError.TcpWriter;
+    };
+
+    _ = waitForResponse(&tcpReader, MessageType.UnChocke) catch {
+        return RequestError.TcpResponse;
+    };
+    //_ = stdout.print("Peer ID: {s}", .{std.fmt.fmtSliceHexLower(res.peerId[0..])});
+}
+
+fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *reader.BencodeValue, alloc: std.mem.Allocator) RequestError!void {
+    if (input.* != reader.BencodedType.dictionary) {
+        return error.BencodeParser;
+    }
+
+    const metadata = input.*.dictionary.get("info").?;
+
+    if (metadata != reader.BencodedType.dictionary) {
+        return error.BencodeParser;
+    }
+
+    //const pieceLength = metadata.dictionary.get("piece length").?;
+    //const pieces = metadata.dictionary.get("pieces").?.string;
+    const bencodedInfo = writer.bencode(&metadata, alloc) catch {
+        return RequestError.BencodeParser;
+    };
+
+    var sha1: [20]u8 = undefined;
+    sha.hash(bencodedInfo, &sha1, sha.Options{});
+
+    const pieces = metadata.dictionary.get("pieces").?;
+    const pieceLength = metadata.dictionary.get("piece length").?.int;
+    var length = metadata.dictionary.get("length").?.int;
+
+    const count = pieces.string.len / 20;
+    var downloadPerPieces = alloc.alloc(i64, count) catch {
+        return RequestError.TcpConnection;
+    };
+    defer alloc.free(downloadPerPieces);
+    {
+        for (0..count) |i| {
+            if (length > pieceLength) {
+                downloadPerPieces[i] = pieceLength;
+                length -= pieceLength;
+            } else {
+                downloadPerPieces[i] = length;
+                length -= length;
+            }
+        }
+    }
+
+    const downloadForPiece = downloadPerPieces[pieceIndex];
+    var totalDownloadSize: u32 = 0;
+    const castedPieceLength: u32 = @intCast(pieceLength);
+    while (totalDownloadSize < downloadForPiece) {
+        var take: u32 = 16 * 1024;
+        if (take + totalDownloadSize > castedPieceLength) {
+            take = castedPieceLength - totalDownloadSize;
+        }
+        std.debug.print("Size {d} Index {d} begin {d} length {d}\n", .{ @sizeOf(RequestMessage), pieceIndex, totalDownloadSize, take });
+
+        tcpWriter.writeInt(u32, 13, .big) catch {
+            return RequestError.TcpWriter;
+        };
+
+        tcpWriter.writeByte(6) catch {
+            return RequestError.TcpWriter;
+        };
+
+        tcpWriter.writeInt(u32, pieceIndex, .big) catch {
+            return RequestError.TcpWriter;
+        };
+        tcpWriter.writeInt(u32, totalDownloadSize, .big) catch {
+            return RequestError.TcpWriter;
+        };
+        tcpWriter.writeInt(u32, take, .big) catch {
+            return RequestError.TcpWriter;
+        };
+
+        const response = waitForResponse(&tcpReader, MessageType.Piece) catch {
+            return RequestError.TcpResponse;
+        };
+        std.debug.print("Prefile {s}\n", .{ filePath});
+        const file = std.fs.cwd().createFile(
+            filePath,
+            .{ .read = true },
+        ) catch {
+            return RequestError.FileErr;
+        };
+        std.debug.print("postfile {s}\n", .{ filePath});
+        _ = file.write(response.body) catch {
+            return RequestError.FileErr;
+        };
+        totalDownloadSize += take;
+    }
 }
 
 fn waitForResponse(tcpReader: *const std.io.AnyReader, expectedResponse: MessageType) !BasicMessage {
-
-
     while (true) {
         const message = try getNextMessage(tcpReader);
 
-        if(message.messageType == @intFromEnum(expectedResponse))
+        if (message.messageType == @intFromEnum(expectedResponse)) {
             return message;
-
+        } else {
+            std.debug.print("Unknown message {d}", .{message.messageType});
+        }
     }
 }
 fn getNextMessage(tcpReader: *const std.io.AnyReader) !BasicMessage {
     var len: u32 = 0;
-    while(len == 0) {
-        
-        std.debug.print("WTF bits: {d} \n", .{@divExact(@typeInfo(u32).int.bits, 8)});
+    while (len == 0) {
+        std.debug.print("WTF bits: {d} \n", .{@divExact(@typeInfo(u32).Int.bits, 8)});
         //const bytes = try tcpReader.*.readBytesNoEof(4);
         //len = std.mem.readInt(u32, &bytes, .big);
         len = try tcpReader.*.readInt(u32, .big);
@@ -327,14 +442,19 @@ fn getNextMessage(tcpReader: *const std.io.AnyReader) !BasicMessage {
     const bytes = try tcpReader.*.readBytesNoEof(1);
     const messageType: MessageType = @enumFromInt(std.mem.readInt(u8, &bytes, .big));
 
-        std.debug.print("Byte: {any} Len: {d}\n", .{messageType, len});
     len -= 1;
+    const body = try allocator.alloc(u8, len);
 
-    try tcpReader.skipBytes(len, .{});
-    return BasicMessage { .messageType = @intFromEnum(messageType)};
+    for (0..len) |i| {
+        body[i] = try tcpReader.readByte();
+    }
+    std.debug.print("Byte: {any} Len: {d} body: {any}\n", .{ messageType, len, body });
+    //const body = try tcpReader.*.readAllAlloc(allocator, len);
+    //std.debug.print("Left in response body {any}", .{body});
 
-
+    return BasicMessage{ .size = len, .messageType = @intFromEnum(messageType), .body = body };
 }
+
 const Handshake = extern struct {
     protocolLength: u8 = 19,
 
@@ -347,15 +467,12 @@ const Handshake = extern struct {
     peerId: [20]u8,
 };
 
-const BasicMessage = extern struct {
-    messageType: u8
-};
+const BasicMessage = struct { size: u32, messageType: u8, body: []u8 };
+const RequestMessage = extern struct { size: u32, messageType: u8, index: u32, begin: u32, length: u32 };
+const RequestMessageClean = extern struct { index: u32, begin: u32, length: u32 };
 
-const BitfieldMessage = struct {
-    messageType: MessageType,
-    bitfield: u4
-};
-const MessageType = enum { Choke, UnChocke, Interested, NotInterested, Have, Bitfield, Request, Piece, Cancel };
+const BitfieldMessage = struct { messageType: MessageType, bitfield: u4 };
+const MessageType = enum(u8) { Choke, UnChocke, Interested, NotInterested, Have, Bitfield, Request, Piece, Cancel };
 
 fn lessthan(_: void, lhs: []const u8, rhs: []const u8) bool {
     return std.mem.order(u8, lhs, rhs) == .lt;
