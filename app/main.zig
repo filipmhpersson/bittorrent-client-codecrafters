@@ -381,7 +381,7 @@ fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *re
         if (take + totalDownloadSize > castedPieceLength) {
             take = castedPieceLength - totalDownloadSize;
         }
-        std.debug.print("Size {d} Index {d} begin {d} length {d}\n", .{ @sizeOf(RequestMessage), pieceIndex, totalDownloadSize, take });
+        std.debug.print("Size {d} Index {d} begin {d} length {d}\n", .{ castedPieceLength, pieceIndex, totalDownloadSize, take });
 
         tcpWriter.writeInt(u32, 13, .big) catch {
             return RequestError.TcpWriter;
@@ -448,7 +448,6 @@ fn getNextMessage(tcpReader: *const std.io.AnyReader) !BasicMessage {
     for (0..len) |i| {
         body[i] = try tcpReader.readByte();
     }
-    std.debug.print("Byte: {any} Len: {d} body: {any}\n", .{ messageType, len, body });
     //const body = try tcpReader.*.readAllAlloc(allocator, len);
     //std.debug.print("Left in response body {any}", .{body});
 
