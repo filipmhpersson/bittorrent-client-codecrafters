@@ -376,6 +376,12 @@ fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *re
     const downloadForPiece = downloadPerPieces[pieceIndex];
     var totalDownloadSize: u32 = 0;
     const castedPieceLength: u32 = @intCast(pieceLength);
+    const file = std.fs.cwd().createFile(
+        filePath,
+        .{ .read = true },
+    ) catch {
+        return RequestError.FileErr;
+    };
     while (totalDownloadSize < downloadForPiece) {
         var take: u32 = 16 * 1024;
         if (take + totalDownloadSize > castedPieceLength) {
@@ -404,14 +410,8 @@ fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *re
         const response = waitForResponse(&tcpReader, MessageType.Piece) catch {
             return RequestError.TcpResponse;
         };
-        std.debug.print("Prefile {s}\n", .{ filePath});
-        const file = std.fs.cwd().createFile(
-            filePath,
-            .{ .read = true },
-        ) catch {
-            return RequestError.FileErr;
-        };
-        std.debug.print("postfile {s}\n", .{ filePath});
+        std.debug.print("Prefile {s}\n", .{filePath});
+        std.debug.print("postfile {s}\n", .{filePath});
         _ = file.write(response.body) catch {
             return RequestError.FileErr;
         };
