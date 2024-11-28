@@ -91,6 +91,9 @@ pub fn main() !void {
         const torrent = args[4];
         const piece = args[5];
         filePath = output;
+        
+
+        pieceIndex = try std.fmt.parseInt(u32, piece, 10);
 
         var file = try std.fs.cwd().openFile(torrent, .{});
         const encodedStr = try file.readToEndAlloc(allocator, 1024 * 1024);
@@ -100,6 +103,7 @@ pub fn main() !void {
         };
         defer file.close();
         const ip = try getTorrent(b, alloca);
+        
 
         var requests: [2]*const TcpFunction = .{ &getHandshake, &getPiece };
         try sendRequests(&b, ip, alloca, requests[0..]);
@@ -361,6 +365,7 @@ fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *re
         return RequestError.TcpConnection;
     };
     defer alloc.free(downloadPerPieces);
+
     {
         for (0..count) |i| {
             if (length > pieceLength) {
@@ -373,9 +378,10 @@ fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *re
         }
     }
 
+    std.debug.print("SIZE {any}", .{downloadPerPieces});
     const downloadForPiece = downloadPerPieces[pieceIndex];
     var totalDownloadSize: u32 = 0;
-    const castedPieceLength: u32 = @intCast(pieceLength);
+    const castedPieceLength: u32 = @intCast(downloadForPiece);
     const file = std.fs.cwd().createFile(
         filePath,
         .{ .read = true },

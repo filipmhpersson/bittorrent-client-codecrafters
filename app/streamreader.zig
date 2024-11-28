@@ -91,7 +91,7 @@ fn getDictionary(input: []const u8, pos: *usize, allocator: std.mem.Allocator) P
     return BencodeValue{ .dictionary = dict };
 }
 
-fn getInt(digits: []const u8) usize {
+pub fn getInt(digits: []const u8) usize {
     var int: usize = 0;
     for (digits) |char| {
         int = (int * 10) + char - '0';
