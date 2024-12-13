@@ -54,7 +54,6 @@ pub fn main() !void {
         defer file.close();
 
         _ = try getTorrent(b, alloca);
-        try stdout.print("\n", .{});
     }
 
     if (std.mem.eql(u8, command, "handshake")) {
@@ -91,7 +90,6 @@ pub fn main() !void {
         const torrent = args[4];
         const piece = args[5];
         filePath = output;
-        
 
         pieceIndex = try std.fmt.parseInt(u32, piece, 10);
 
@@ -103,7 +101,6 @@ pub fn main() !void {
         };
         defer file.close();
         const ip = try getTorrent(b, alloca);
-        
 
         var requests: [2]*const TcpFunction = .{ &getHandshake, &getPiece };
         try sendRequests(&b, ip, alloca, requests[0..]);
@@ -256,6 +253,9 @@ fn getTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !std.net.Ip4
     var position: usize = 0;
     const response = try reader.getNextValue(buf, &position, alloc);
     const p = response.dictionary.get("peers").?.string;
+    var ipSet = false;
+    var address: [4]u8 = undefined;
+    var port: u16 = undefined;
     {
         var i: usize = 0;
         while (i < p.len) : (i += 6) {
@@ -267,12 +267,23 @@ fn getTorrent(input: reader.BencodeValue, alloc: std.mem.Allocator) !std.net.Ip4
             ba[1] = aw[1];
             const parsedPort = std.mem.readInt(u16, &ba, std.builtin.Endian.big);
 
-            const address = .{ slice[0], slice[1], slice[2], slice[3] };
+            if(!ipSet) {
+                ipSet = true;
+
+                address = .{ slice[0], slice[1], slice[2], slice[3] };
+                port = parsedPort;
+            }
             try stdout.print("{d}.{d}.{d}.{d}:{d}\n", .{ slice[0], slice[1], slice[2], slice[3], parsedPort });
-            return std.net.Ip4Address.init(address, parsedPort);
         }
     }
-    return RequestError.NoIP;
+    if(!ipSet){
+
+        return RequestError.NoIP;
+    } else {
+
+        return std.net.Ip4Address.init(address, port);
+    }
+
 }
 
 const TcpFunction = fn (tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *reader.BencodeValue, alloc: std.mem.Allocator) RequestError!void;
@@ -316,24 +327,15 @@ fn getHandshake(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input:
         return RequestError.TcpConnection;
     };
 
-    _ = tcpReader.readStruct(Handshake) catch {
+    std.debug.print("WROTE HANDSHAKE\n", .{});
+    const hsResponse =  tcpReader.readStruct(Handshake) catch {
         return RequestError.TcpConnection;
     };
-    _ = waitForResponse(&tcpReader, MessageType.Bitfield) catch {
-        return RequestError.TcpResponse;
+    std.debug.print("READ HANDSHAKE {any}\n", .{hsResponse});
+    stdout.print("Peer ID: {s}", .{std.fmt.fmtSliceHexLower(hsResponse.peerId[0..])}) catch {
+        return RequestError.BencodeParser;
     };
-
-    tcpWriter.writeInt(u32, 1, .big) catch {
-        return RequestError.TcpWriter;
-    };
-    tcpWriter.writeByte(2) catch {
-        return RequestError.TcpWriter;
-    };
-
-    _ = waitForResponse(&tcpReader, MessageType.UnChocke) catch {
-        return RequestError.TcpResponse;
-    };
-    //_ = stdout.print("Peer ID: {s}", .{std.fmt.fmtSliceHexLower(res.peerId[0..])});
+    
 }
 
 fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *reader.BencodeValue, alloc: std.mem.Allocator) RequestError!void {
@@ -378,6 +380,24 @@ fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *re
         }
     }
 
+
+    _ = waitForResponse(&tcpReader, MessageType.Bitfield) catch {
+        return RequestError.TcpResponse;
+    };
+    std.debug.print("WROTE BITFIELD\n", .{});
+
+    
+    tcpWriter.writeInt(u32, 1, .big) catch {
+        return RequestError.TcpWriter;
+    };
+    std.debug.print("WROTE INT\n", .{});
+    tcpWriter.writeByte(2) catch {
+        return RequestError.TcpWriter;
+    };
+
+    _ = waitForResponse(&tcpReader, MessageType.UnChocke) catch {
+        return RequestError.TcpResponse;
+    };
     std.debug.print("SIZE {any}", .{downloadPerPieces});
     const downloadForPiece = downloadPerPieces[pieceIndex];
     var totalDownloadSize: u32 = 0;
@@ -393,7 +413,7 @@ fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *re
         if (take + totalDownloadSize > castedPieceLength) {
             take = castedPieceLength - totalDownloadSize;
 
-            std.debug.print("DOES LAST MAGIC take {d} casted {d} download {d}\n", .{take, castedPieceLength, totalDownloadSize});
+            std.debug.print("DOES LAST MAGIC take {d} casted {d} download {d}\n", .{ take, castedPieceLength, totalDownloadSize });
         }
         std.debug.print("Size {d} Index {d} begin {d} length {d}\n", .{ castedPieceLength, pieceIndex, totalDownloadSize, take });
 
@@ -419,7 +439,6 @@ fn getPiece(tcpReader: std.io.AnyReader, tcpWriter: std.io.AnyWriter, input: *re
             return RequestError.TcpResponse;
         };
         std.debug.print("Prefile {s}\n", .{filePath});
-        std.debug.print("postfile {s}\n", .{filePath});
         _ = file.write(response.body) catch {
             return RequestError.FileErr;
         };
@@ -441,21 +460,27 @@ fn waitForResponse(tcpReader: *const std.io.AnyReader, expectedResponse: Message
 fn getNextMessage(tcpReader: *const std.io.AnyReader) !BasicMessage {
     var len: u32 = 0;
     while (len == 0) {
-        std.debug.print("WTF bits: {d} \n", .{@divExact(@typeInfo(u32).Int.bits, 8)});
-        //const bytes = try tcpReader.*.readBytesNoEof(4);
-        //len = std.mem.readInt(u32, &bytes, .big);
         len = try tcpReader.*.readInt(u32, .big);
     }
 
+    std.debug.print("Len from response {d}\n", .{len});
     const bytes = try tcpReader.*.readBytesNoEof(1);
     const messageType: MessageType = @enumFromInt(std.mem.readInt(u8, &bytes, .big));
 
     len -= 1;
-    const body = try allocator.alloc(u8, len);
 
-    for (0..len) |i| {
-        body[i] = try tcpReader.readByte();
-    }
+    if (messageType == MessageType.Piece) {
+        const index = try tcpReader.readInt(u32, .big);
+        const begin = try tcpReader.readInt(u32, .big);
+        len -= 8;
+        std.debug.print("Piece index: {d} begin {d} len {d}\n", .{index, begin, len});
+
+    } 
+    const body = try allocator.alloc(u8, len);
+        for (0..len) |i| {
+            body[i] = try tcpReader.readByte();
+        }
+    std.debug.print("BODY {d}\n", .{body.len});
     //const body = try tcpReader.*.readAllAlloc(allocator, len);
     //std.debug.print("Left in response body {any}", .{body});
 
@@ -477,6 +502,7 @@ const Handshake = extern struct {
 const BasicMessage = struct { size: u32, messageType: u8, body: []u8 };
 const RequestMessage = extern struct { size: u32, messageType: u8, index: u32, begin: u32, length: u32 };
 const RequestMessageClean = extern struct { index: u32, begin: u32, length: u32 };
+const PieceResponse = extern struct { index: u32, begin: u32 };
 
 const BitfieldMessage = struct { messageType: MessageType, bitfield: u4 };
 const MessageType = enum(u8) { Choke, UnChocke, Interested, NotInterested, Have, Bitfield, Request, Piece, Cancel };
